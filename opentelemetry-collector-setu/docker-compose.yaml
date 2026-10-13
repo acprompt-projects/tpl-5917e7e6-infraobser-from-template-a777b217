@@ -1,0 +1,35 @@
+version: "3.8"
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.96.0
+    container_name: otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./config.yaml:/etc/otelcol/config.yaml:ro
+      - otel-data:/etc/otelcol/data
+    ports:
+      - "4317:4317"    # OTLP gRPC receiver
+      - "4318:4318"    # OTLP HTTP receiver
+      - "8889:8889"    # Prometheus exporter metrics
+      - "13133:13133"  # Health check
+      - "55679:55679"  # ZPages
+    environment:
+      - LOKI_ENDPOINT=http://loki:3100/loki/api/v1/push
+      - TEMPO_ENDPOINT=tempo:4317
+    networks:
+      - monitoring
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  otel-data:
+
+networks:
+  monitoring:
+    external: true
+    name: monitoring
