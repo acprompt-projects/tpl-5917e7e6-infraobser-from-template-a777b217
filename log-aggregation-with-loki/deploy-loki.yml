@@ -1,0 +1,85 @@
+---
+- name: Deploy Loki and Promtail for log aggregation
+  hosts: logging
+  become: true
+  vars:
+    loki_version: "3.1.1"
+    loki_http_port: 3100
+    loki_base_dir: /opt/loki
+    loki_config_dir: /opt/loki/config
+    loki_data_dir: /opt/loki/data
+    promtail_config_dir: /opt/promtail/config
+
+  pre_tasks:
+    - name: Create Loki and Promtail directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ loki_config_dir }}"
+        - "{{ loki_data_dir }}"
+        - "{{ loki_data_dir }}/chunks"
+        - "{{ loki_data_dir }}/rules"
+        - "{{ promtail_config_dir }}"
+
+  tasks:
+    - name: Copy Loki configuration
+      ansible.builtin.copy:
+        src: loki-config.yml
+        dest: "{{ loki_config_dir }}/loki-config.yml"
+        mode: "0644"
+      notify: Restart Loki
+
+    - name: Copy Promtail configuration
+      ansible.builtin.copy:
+        src: promtail-config.yml
+        dest: "{{ promtail_config_dir }}/promtail-config.yml"
+        mode: "0644"
+      notify: Restart Promtail
+
+    - name: Run Loki container
+      community.docker.docker_container:
+        name: loki
+        image: "grafana/loki:{{ loki_version }}"
+        state: started
+        restart_policy: unless-stopped
+        command: -config.file=/etc/loki/loki-config.yml
+        ports:
+          - "{{ loki_http_port }}:3100"
+        volumes:
+          - "{{ loki_config_dir }}:/etc/loki:ro"
+          - "{{ loki_data_dir }}:/loki"
+        healthcheck:
+          test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready || exit 1"]
+          interval: 30s
+          timeout: 5s
+          retries: 5
+
+    - name: Run Promtail container
+      community.docker.docker_container:
+        name: promtail
+        image: "grafana/promtail:{{ loki_version }}"
+        state: started
+        restart_policy: unless-stopped
+        command: -config.file=/etc/promtail/promtail-config.yml
+        volumes:
+          - "{{ promtail_config_dir }}:/etc/promtail:ro"
+          - /var/log:/var/log:ro
+          - /var/lib/docker/containers:/var/lib/docker/containers:ro
+          - /var/run/docker.sock:/var/run/docker.sock:ro
+        extra_hosts:
+          - "host.docker.internal:host-gateway"
+
+  handlers:
+    - name: Restart Loki
+      community.docker.docker_container:
+        name: loki
+        state: started
+        restart: true
+
+    - name: Restart Promtail
+      community.docker.docker_container:
+        name: promtail
+        state: started
+        restart: true
